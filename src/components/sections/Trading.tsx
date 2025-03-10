@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { useAccount, useContractWrite, usePrepareContractWrite, useSendTransaction } from 'wagmi';
+import { useAccount, useSendTransaction } from 'wagmi';
 import { parseEther } from 'viem';
 import { Send, ArrowLeftRight, AlertCircle, Loader2, RefreshCw, MessageSquare } from 'lucide-react';
-import { getTokenBalance, ERC20_ABI } from '../../services/blockchain';
+import { getTokenBalance } from '../../services/blockchain';
+import { getSwapQuote, executeSwap } from '../../services/dex';
 
 interface ChatMessage {
   id: string;
@@ -10,6 +11,10 @@ interface ChatMessage {
   type: 'user' | 'system';
   timestamp: number;
 }
+
+// Token addresses
+const WUSD_ADDRESS = '0x9e47b13223611871e4b22ba825267667cfcd1559';
+const NATIVE_ADDRESS = '0x0000000000000000000000000000000000000000';
 
 export function Trading() {
   const { isConnected, address } = useAccount();
@@ -19,52 +24,51 @@ export function Trading() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [processing, setProcessing] = useState(false);
-  const [sendState, setSendState] = useState({
-    to: '',
-    amount: '',
-    tokenAddress: ''
-  });
+  const [pendingSwap, setPendingSwap] = useState<{
+    amount: string;
+    fromToken: string;
+    toToken: string;
+    quote: any;
+  } | null>(null);
+  const [initialized, setInitialized] = useState(false);
 
   // Native token transfer
-  const { data: sendData, sendTransaction, isLoading: isSending } = useSendTransaction();
-
-  // ERC20 token transfer
-  const { config: tokenConfig } = usePrepareContractWrite({
-    address: sendState.tokenAddress as `0x${string}`,
-    abi: ERC20_ABI,
-    functionName: 'transfer',
-    args: sendState.to && sendState.amount ? [
-      sendState.to as `0x${string}`,
-      parseEther(sendState.amount)
-    ] : undefined,
-    enabled: Boolean(sendState.to && sendState.amount && sendState.tokenAddress)
-  });
-
-  const { write: sendToken, isLoading: isTokenSending } = useContractWrite(tokenConfig);
+  const { sendTransaction } = useSendTransaction();
 
   useEffect(() => {
-    if (address) {
-      loadBalance();
-      addSystemMessage('Welcome to Sonic Trading! I can help you check balances, send tokens, and swap. Just ask me in natural language!');
-    }
-  }, [address]);
+    const init = async () => {
+      if (address && !initialized) {
+        setInitialized(true);
+        setMessages([{
+          id: `welcome-${Date.now()}`,
+          content: 'Welcome to SonicX AI Trading, I\'m an AI Agent that can check balance, send and swap tokens for you.',
+          type: 'system',
+          timestamp: Date.now()
+        }]);
+        await loadBalances(false); // Pass false to prevent adding balance message during init
+      }
+    };
 
-  const loadBalance = async (walletAddress?: string) => {
-    const targetAddress = walletAddress || address;
-    if (!targetAddress) return;
+    init();
+  }, [address, initialized]);
+
+  const loadBalances = async (showMessage = true) => {
+    if (!address) return;
     
     setLoading(true);
     setError(null);
     try {
-      const balance = await getTokenBalance(targetAddress);
-      if (!walletAddress) {
-        setTokenBalance(balance);
+      const sBalance = await getTokenBalance(address);
+      setTokenBalance(sBalance);
+      if (showMessage) {
+        addSystemMessage(`Your balance: ${sBalance.balance} ${sBalance.symbol}`);
       }
-      return balance;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load balance';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load balances';
       setError(errorMessage);
-      return null;
+      if (showMessage) {
+        addSystemMessage(`Error: ${errorMessage}`);
+      }
     } finally {
       setLoading(false);
     }
@@ -92,27 +96,85 @@ export function Trading() {
     }]);
   };
 
-  const handleSendTokens = async (recipientAddress: string, amount: string, tokenAddress?: string) => {
+  const handleSendTokens = async (recipientAddress: string, amount: string) => {
     if (!address || !recipientAddress || !amount) return;
 
     try {
-      if (tokenAddress) {
-        // Send ERC20 tokens
-        setSendState({
-          to: recipientAddress,
-          amount,
-          tokenAddress
-        });
-        sendToken?.();
-      } else {
-        // Send native tokens
-        sendTransaction({
-          to: recipientAddress,
-          value: parseEther(amount)
-        });
-      }
+      sendTransaction({
+        to: recipientAddress as `0x${string}`,
+        value: parseEther(amount)
+      });
+      
+      addSystemMessage(`Initiating transfer of ${amount} S to ${recipientAddress}...`);
     } catch (err) {
       addSystemMessage(`Error: ${err instanceof Error ? err.message : 'Failed to send tokens'}`);
+    }
+  };
+
+  const handleSwapTokens = async (amount: string, fromToken: string, toToken: string) => {
+    if (!address || !amount) return;
+
+    try {
+      setProcessing(true);
+      
+      // Convert token symbols to addresses
+      const fromAddress = fromToken.toUpperCase() === 'S' ? NATIVE_ADDRESS : 
+                         fromToken.toUpperCase() === 'WUSD' ? WUSD_ADDRESS :
+                         null;
+      
+      const toAddress = toToken.toUpperCase() === 'S' ? NATIVE_ADDRESS :
+                       toToken.toUpperCase() === 'WUSD' ? WUSD_ADDRESS :
+                       null;
+
+      if (!fromAddress || !toAddress) {
+        throw new Error(`Unsupported token pair: ${fromToken}/${toToken}. Only S and WUSD are supported.`);
+      }
+
+      // Get quote first
+      const quote = await getSwapQuote(fromAddress, toAddress, amount);
+
+      setPendingSwap({ amount, fromToken, toToken, quote });
+
+      addSystemMessage(`
+Swap Quote:
+• Input: ${quote.inputAmount} ${fromToken}
+• Output: ${quote.outputAmount} ${toToken}
+• Price: 1 ${fromToken} = ${quote.executionPrice} ${toToken}
+• Price Impact: ${quote.priceImpact}%
+• Minimum Received: ${quote.minimumReceived} ${toToken}
+
+Would you like to proceed with the swap? Type 'confirm swap' to execute.`);
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to get swap quote';
+      console.error('Swap error:', err);
+      addSystemMessage(`Error: ${errorMessage}`);
+      setPendingSwap(null);
+    } finally {
+      setProcessing(false);
+    }
+  };
+
+  const handleConfirmSwap = async () => {
+    if (!pendingSwap) {
+      addSystemMessage('No pending swap to confirm. Please start a new swap.');
+      return;
+    }
+
+    try {
+      setProcessing(true);
+      const txHash = await executeSwap(pendingSwap.quote);
+      addSystemMessage(`Swap executed successfully! Transaction: ${txHash}`);
+      setPendingSwap(null);
+      
+      // Refresh balances after swap
+      await loadBalances();
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to execute swap';
+      addSystemMessage(`Error: ${errorMessage}`);
+      setPendingSwap(null);
+    } finally {
+      setProcessing(false);
     }
   };
 
@@ -139,26 +201,28 @@ export function Trading() {
     }
 
     // Send tokens patterns
-    const sendMatch = text.match(/^send\s+(\d+\.?\d*)\s*(sonic|s)\s+to\s+(0x[a-fA-F0-9]{40})\s*$/i);
+    const sendMatch = text.match(/^send\s+(\d+\.?\d*)\s*(s)\s+to\s+(0x[a-fA-F0-9]{40})\s*$/i);
     if (sendMatch && isValidAddress(sendMatch[3])) {
       return { command: 'send', args: [sendMatch[3], sendMatch[1]] };
     }
 
-    // Swap patterns
-    const swapMatch = text.match(/^swap\s+(\d+\.?\d*)\s*(sonic|s)(\s+for\s+(\w+))?\s*$/i);
+    // Swap tokens patterns
+    const swapMatch = text.match(/^swap\s+(\d+\.?\d*)\s*(s|wusd)\s+to\s+(s|wusd)\s*$/i);
     if (swapMatch) {
-      return { command: 'swap', args: [swapMatch[1], swapMatch[4] || 'USDC'] };
+      return { 
+        command: 'swap',
+        args: [swapMatch[1], swapMatch[2].toUpperCase(), swapMatch[3].toUpperCase()]
+      };
+    }
+
+    // Confirm swap pattern
+    if (text === 'confirm swap') {
+      return { command: 'confirmSwap', args: [] };
     }
 
     // Help pattern
     if (text.match(/^(help|commands|what can you do|how do I|how to)\s*$/i)) {
       return { command: 'help', args: [] };
-    }
-
-    // Extract wallet address if present anywhere in the text
-    const addressMatch = text.match(/(0x[a-fA-F0-9]{40})/);
-    if (addressMatch && isValidAddress(addressMatch[1])) {
-      return { command: 'balance', args: [addressMatch[1]] };
     }
 
     return { command: 'unknown', args: [] };
@@ -178,13 +242,12 @@ export function Trading() {
             addSystemMessage('Invalid wallet address format. Please provide a valid Ethereum address.');
             break;
           }
-          const balance = await loadBalance(walletAddress);
-          if (balance) {
-            addSystemMessage(
-              walletAddress
-                ? `Balance for ${walletAddress}: ${balance.balance} ${balance.symbol}`
-                : `Your balance: ${balance.balance} ${balance.symbol}`
-            );
+          
+          try {
+            const balance = await getTokenBalance(walletAddress || address!);
+            addSystemMessage(`Balance: ${balance.balance} ${balance.symbol}`);
+          } catch (error) {
+            addSystemMessage(`Error checking balance: ${error instanceof Error ? error.message : 'Unknown error'}`);
           }
           break;
         }
@@ -192,7 +255,7 @@ export function Trading() {
         case 'send': {
           const [recipient, amount] = args;
           if (!recipient || !amount) {
-            addSystemMessage('Please specify both recipient address and amount. For example: "send 1 SONIC to 0x..."');
+            addSystemMessage('Please specify both recipient address and amount. For example: "send 1 S to 0x..."');
             break;
           }
           if (!isValidAddress(recipient)) {
@@ -204,18 +267,30 @@ export function Trading() {
         }
 
         case 'swap': {
-          const [amount, targetToken] = args;
-          addSystemMessage(`Swap functionality for ${amount} SONIC to ${targetToken} coming soon!`);
+          const [amount, fromToken, toToken] = args;
+          if (!amount || !fromToken || !toToken) {
+            addSystemMessage('Please specify amount and tokens. For example: "swap 1 S to WUSD"');
+            break;
+          }
+          if (fromToken === toToken) {
+            addSystemMessage('Cannot swap a token for itself.');
+            break;
+          }
+          await handleSwapTokens(amount, fromToken, toToken);
           break;
         }
+
+        case 'confirmSwap':
+          await handleConfirmSwap();
+          break;
 
         case 'help':
           addSystemMessage(`
 I can help you with the following:
 
 • Check balance: "check balance" or "check balance for 0x..."
-• Send tokens: "send 1 SONIC to 0x..."
-• Swap tokens: "swap 1 SONIC for USDC" (coming soon)
+• Send tokens: "send 1 S to 0x..."
+• Swap tokens: "swap 1 S to WUSD" or "swap 1 WUSD to S"
 
 You can also directly paste a wallet address to check its balance!`);
           break;
@@ -249,63 +324,34 @@ You can also directly paste a wallet address to check its balance!`);
 
   return (
     <div className="text-white space-y-8">
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Balance Card */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-semibold">Your Balance</h3>
-            <button
-              onClick={() => loadBalance()}
-              className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors"
-              disabled={loading}
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
-          </div>
-          {loading ? (
-            <div className="animate-pulse">
-              <div className="h-8 bg-white/20 rounded w-1/2 mb-2"></div>
-              <div className="h-4 bg-white/20 rounded w-1/3"></div>
-            </div>
-          ) : error ? (
-            <div className="text-red-400 flex items-center gap-2">
-              <AlertCircle className="w-5 h-5" />
-              <span>{error}</span>
-            </div>
-          ) : tokenBalance ? (
-            <div>
-              <p className="text-2xl font-bold">{tokenBalance.balance} {tokenBalance.symbol}</p>
-              <p className="text-sm text-gray-400">Available to trade</p>
-            </div>
-          ) : null}
+      {/* Balance Card */}
+      <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold">Your Balance</h3>
+          <button
+            onClick={() => loadBalances(true)}
+            className="flex items-center gap-2 text-sm text-blue-400 hover:text-blue-300 transition-colors"
+            disabled={loading}
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
         </div>
-
-        {/* Quick Actions */}
-        <div className="bg-white/10 backdrop-blur-lg rounded-xl p-6">
-          <h3 className="text-lg font-semibold mb-4">Quick Actions</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <button
-              onClick={() => handleCommand('send 0 SONIC to 0x0000000000000000000000000000000000000000')}
-              className="flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 transition-colors rounded-lg p-4"
-              disabled={isSending || isTokenSending}
-            >
-              {isSending || isTokenSending ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <Send className="w-5 h-5" />
-              )}
-              <span>Send</span>
-            </button>
-            <button
-              onClick={() => handleCommand('swap 0 SONIC for USDC')}
-              className="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 transition-colors rounded-lg p-4"
-            >
-              <ArrowLeftRight className="w-5 h-5" />
-              <span>Swap</span>
-            </button>
+        {loading ? (
+          <div className="animate-pulse space-y-4">
+            <div className="h-8 bg-white/20 rounded w-1/2"></div>
           </div>
-        </div>
+        ) : error ? (
+          <div className="text-red-400 flex items-center gap-2">
+            <AlertCircle className="w-5 h-5" />
+            <span>{error}</span>
+          </div>
+        ) : (
+          <div>
+            <p className="text-2xl font-bold">{tokenBalance?.balance || '0'} S</p>
+            <p className="text-sm text-gray-400">Native token</p>
+          </div>
+        )}
       </div>
 
       {/* Chat Interface */}
@@ -340,7 +386,7 @@ You can also directly paste a wallet address to check its balance!`);
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Type your request (e.g., 'check balance', 'send 1 SONIC to...')"
+            placeholder="Type your request (e.g., 'check balance', 'send 1 S to...', 'swap 1 S to WUSD')"
             className="w-full bg-white/20 rounded-lg px-4 py-2 pr-12 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
             disabled={processing}
           />
