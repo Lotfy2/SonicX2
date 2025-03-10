@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { resolve } from 'path';
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   server: {
@@ -10,7 +10,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': '/src'
+      '@': resolve(__dirname, 'src')
     }
   },
   build: {
@@ -23,7 +23,7 @@ export default defineConfig({
       output: {
         manualChunks: {
           'react-vendor': ['react', 'react-dom'],
-          'web3-vendor': ['wagmi', 'viem', '@web3modal/wagmi'],
+          'web3-vendor': ['wagmi', 'viem', '@web3modal/wagmi', 'ethers'],
         }
       }
     }
