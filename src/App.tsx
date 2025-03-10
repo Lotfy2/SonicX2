@@ -16,8 +16,8 @@ import { Social } from './components/sections/Social';
 // Configure wagmi
 const projectId = 'YOUR_WALLETCONNECT_PROJECT_ID';
 const metadata = {
-  name: 'Sonic Blaze AI Chatbot',
-  description: 'AI-powered chatbot for Sonic Blaze Testnet',
+  name: 'SonicX AI',
+  description: 'AI-powered trading assistant for SonicX',
   url: 'https://your-website.com',
   icons: ['https://avatars.githubusercontent.com/u/37784886']
 };
@@ -107,7 +107,7 @@ function App() {
                 <h1 className="text-3xl font-bold text-white">
                   {activeSection 
                     ? sections.find(s => s.id === activeSection)?.title 
-                    : 'Sonic Blaze AI Chatbot'}
+                    : 'SonicX AI'}
                 </h1>
               </div>
               <w3m-button />
