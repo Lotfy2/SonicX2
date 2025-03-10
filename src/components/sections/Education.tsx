@@ -1,10 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { Book, Award, ChevronLeft, CheckCircle, XCircle, BookOpen, GraduationCap, Clock, Plus, Loader2 } from 'lucide-react';
 import { lessons, generateLesson, type Lesson } from '../../services/education/lessons';
 import { achievements, mintAchievementNFT } from '../../services/education/achievements';
 import { marked } from 'marked';
-import { ChatSection } from '../ChatSection';
 
 // Configure marked for syntax highlighting and custom rendering
 marked.setOptions({
@@ -462,8 +461,6 @@ export function Education() {
           )}
         </div>
       ) : null}
-      
-      <ChatSection section="education" context="blockchain education and learning" />
     </div>
   );
 }
