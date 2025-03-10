@@ -3,7 +3,7 @@ import { useAccount, useSendTransaction } from 'wagmi';
 import { parseEther } from 'viem';
 import { Send, ArrowLeftRight, AlertCircle, Loader2, RefreshCw, MessageSquare } from 'lucide-react';
 import { getTokenBalance } from '@/services/blockchain';
-import { getSwapQuote, executeSwap } from '@/services/dex';
+import { getSwapQuote, executeSwap } from '@/services/dex.ts';
 
 interface ChatMessage {
   id: string;
