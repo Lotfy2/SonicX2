@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAccount, useSendTransaction } from 'wagmi';
 import { parseEther } from 'viem';
 import { Send, ArrowLeftRight, AlertCircle, Loader2, RefreshCw, MessageSquare } from 'lucide-react';
-import { getTokenBalance } from '../../services/blockchain';
-import { getSwapQuote, executeSwap } from '../../services/dex';
+import { getTokenBalance } from '@/services/blockchain';
+import { getSwapQuote, executeSwap } from '@/services/dex';
 
 interface ChatMessage {
   id: string;
