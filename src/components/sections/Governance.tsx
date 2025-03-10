@@ -1,13 +1,7 @@
 import React, { useState } from 'react';
 import { useAccount } from 'wagmi';
 import { Link2, ExternalLink, CheckCircle, AlertCircle, Loader2, Vote, GalleryVerticalEnd } from 'lucide-react';
-import { analyzeProposal } from '../../services/governance/proposal-analyzer';
-
-interface ProposalAnalysis {
-  summary: string;
-  strengths: string[];
-  weaknesses: string[];
-}
+import { analyzeProposal, type ProposalAnalysis } from '../../services/governance/proposal-analyzer';
 
 export function Governance() {
   const { address } = useAccount();
@@ -27,6 +21,7 @@ export function Governance() {
       setAnalysis(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to analyze proposal');
+      console.error('Analysis error:', err);
     } finally {
       setLoading(false);
     }
